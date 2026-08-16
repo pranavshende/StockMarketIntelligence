@@ -26,10 +26,10 @@
 
 ### Adaptive Meta-Model (Our Contribution)
 - **Drift Detector:** Monitors rolling residual error of the meta-model's predictions using a rolling z-score threshold (**30-day window, |z| > 2.0**); Page-Hinkley test is a stretch upgrade only if time allows.
-- **Regime Classifier:** Discretizes the market into regimes. Start with volatility terciles (Low / Medium / High, based on 20-day rolling ATR) as the simplest definition; upgrade to a trend+volatility 2D grid only if time allows.
+- **HMM Regime Classifier:** A **Hidden Markov Model (HMM)** is fitted per stock on (daily log-returns, 20-day rolling realized volatility) to identify latent market states. Compared to a simple ATR volatility tercile cut, HMM produces a principled probabilistic state sequence with explicit transition probabilities. Starting number of hidden states: **3** (low-volatility trending / high-volatility trending / sideways); optimal number validated per stock using BIC/AIC [TODO: Verify from implementation]. The HMM operates on the returns/volatility series directly, separate from the prediction feature set, to avoid mixing regime signals with base-learner input features.
 - **Adaptive Stacking:** Extends the static equation to be regime-conditioned.
 - **Equation:** `ŷ_meta(t) = β₀(r_t) + β₁(r_t)·ŷ_LSTM + β₂(r_t)·ŷ_ANN + ε`
-- **Implementation choice:** Prototype rolling re-fit of the meta-model first (using a **60-day lookback window** and **Ridge Regression (L2)** to prevent singular matrix errors); a per-regime coefficient bank is an alternative variant if rolling re-fit proves unstable.
+- **Implementation:** Rolling re-fit of the meta-model on a **60-day lookback window**, triggered when the drift detector fires. Uses **Bayesian Ridge Regression** (instead of plain Ridge/OLS) to simultaneously prevent singular matrix errors and produce posterior distributions over β₁ and β₂, enabling uncertainty-quantified coefficient reporting across regimes in the paper. Prior hyperparameters: scikit-learn defaults initially [TODO: Verify from implementation].
 
 ### Serving & Dashboard Layer (New Stack)
 - **Function:** Cloud-deployed distributed system. **Node.js** API (Render/AWS), **React** Web App (Vercel), and **React Native** Mobile App.
@@ -91,7 +91,8 @@ graph TD
 - Sentiment / news ingestion — deferred to future work
 - SHAP for LSTM/ANN base learners
 
-## 4. Novelty Claims (two-part, for the paper)
+## 4. Novelty Claims (three-part, for the paper)
 
 1. **First application** of the Liu et al. LSTM+ANN stacking ensemble to Indian NSE equities (no existing paper does this, per the literature scan).
-2. **Regime-adaptive extension** of their static meta-model coefficients, tested against their original static version as a clean, single-variable ablation.
+2. **HMM-based regime-adaptive extension** of their static meta-model coefficients — uses a principled Hidden Markov Model to detect latent market states rather than a fixed volatility threshold, tested against the original static version as a clean, single-variable ablation.
+3. **Bayesian Ridge Regression meta-model** — replaces plain Ridge re-fitting with a Bayesian formulation that provides posterior uncertainty estimates on ensemble weighting coefficients (β₁, β₂), enabling statistically grounded interpretation of how base-learner reliance shifts across market regimes.

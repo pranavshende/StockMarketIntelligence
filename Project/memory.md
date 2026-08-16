@@ -12,8 +12,8 @@
 5. **Additional Baselines:** RF and XGBoost are evaluated independently alongside the main LSTM+ANN ablation to satisfy the reviewer's "limited model comparison" critique.
 6. **SHAP Scope:** SHAP explainability is applied to RF and XGBoost only. Applying SHAP to LSTM/ANN is out of scope for this build cycle.
 7. **Drift Detector:** Rolling z-score threshold (30-day window, |z| > 2.0) on meta-model residuals is the primary implementation. Page-Hinkley test is a stretch upgrade only if time allows.
-8. **Regime Definition:** Start with volatility terciles (Low / Medium / High, based on 20-day ATR). Upgrade to a trend+volatility 2D grid only if time allows.
-9. **Meta-Model Implementation:** Prototype rolling re-fit of the linear meta-model first (60-day lookback window, utilizing **Ridge Regression** to prevent multicollinearity crashes). A per-regime coefficient bank is an alternative variant if rolling re-fit proves unstable.
+8. **Regime Definition:** **Hidden Markov Model (HMM)** fitted per stock on (daily log-returns, 20-day rolling realized volatility). Starting number of hidden states: 3 (low-vol trending / high-vol trending / sideways). Optimal number validated per stock via BIC/AIC during implementation. HMM is preferred over ATR volatility terciles because it produces principled probabilistic states with transition matrices. The HMM input series is kept separate from base-learner prediction features.
+9. **Meta-Model Implementation:** Rolling re-fit on a 60-day lookback window, triggered by the drift detector, using **Bayesian Ridge Regression** (not plain Ridge or OLS). Bayesian Ridge prevents multicollinearity crashes and provides posterior uncertainty estimates on β₁ and β₂ (how much the ensemble trusts LSTM vs. ANN per regime) — this is a first-class result reported in the paper, not just a safety mechanism. A per-regime coefficient bank remains a contingency if rolling re-fit proves unstable.
 10. **Timeline:** 7–9 weeks solo build alongside coursework. Contingency cut order: React Native App → dashboard polish → SHAP → RF/XGBoost baselines → Page-Hinkley upgrade. The static-vs-adaptive meta-model ablation is never cut.
 11. **Paper-Facing Outputs:** The build must produce an auto-generated experiment report (metrics table + regime-timeline plots) suitable for direct use in the revised paper, along with a rewritten Related Work section and fixed reference list.
 12. **Tech Stack Shift:** Shifted from local Flask/DuckDB to Cloud: Python (ML) + Supabase (DB) + Node.js (API) + React (Web) + React Native (Mobile).
@@ -30,9 +30,9 @@
 ## Open Questions (from master PRD §9)
 
 - Whether to reproduce Liu et al.'s exact hyperparameters (2-layer LSTM, 100 units; ANN 100→50 units) or tune them for NSE data — start with their exact settings, note any necessary changes explicitly in the paper.
-- Regime definition: start with volatility terciles; upgrade only if time allows.
-- Coefficient bank vs. rolling re-fit for the adaptive meta-model — rolling re-fit is simpler; coefficient bank is more interpretable for the dashboard. Prototype rolling re-fit first.
-- Confirm the resubmission deadline: if under ~4 weeks, ship the reproduced static Liu et al. baseline plus the rigor fixes now, and describe the regime-adaptive meta-model as "future work".
+- **HMM number of hidden states:** Starting value is 3. Validate per stock using BIC/AIC during implementation [TODO: Verify from implementation].
+- **Bayesian Ridge prior hyperparameters (α, λ):** Use scikit-learn defaults initially; document any tuning in the paper [TODO: Verify from implementation].
+- Confirm the resubmission deadline: if under ~4 weeks, ship the reproduced static Liu et al. baseline plus the rigor fixes now, and describe the HMM + Bayesian Ridge adaptive meta-model as "future work".
 
 ## Final Goal
 Ship a single, highly defensible ablation study demonstrating that making a static meta-model regime-adaptive yields superior predictive robustness during market shifts on Indian equities.

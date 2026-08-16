@@ -28,10 +28,9 @@
 - **Method:** Standard linear regression fit once on the training split and frozen.
 
 ### The Adaptive Meta-Model (The Contribution)
-- **Drift Detector:** Rolling residual error monitoring via z-score.
-- **Regime Classifier:** State discretizer (e.g., volatility terciles).
-- **Mechanism:** Re-fits `β(r_t)` coefficients dynamically upon regime change. Must use **Ridge Regression ($L2$)** to prevent singular matrix errors caused by perfect multicollinearity between base learners.
-- **Adaptive Stacking:** Re-estimates the linear meta-model on a recent rolling window (or selects from a bank of regime-specific coefficients) when drift occurs.
+- **Drift Detector:** Rolling residual error monitoring via z-score (30-day window, |z| > 2.0).
+- **HMM Regime Classifier:** A **Hidden Markov Model (HMM)** fitted per stock on (daily log-returns, 20-day rolling realized volatility) to infer a discrete latent state sequence. Number of hidden states: 3 [TODO: Verify from implementation]. HMM is preferred over a simple ATR volatility tercile because it produces principled probabilistic states with transition matrices rather than hard threshold cuts. The HMM input series is kept separate from the base-learner prediction features.
+- **Mechanism:** Re-fits `β(r_t)` coefficients dynamically upon drift detection using **Bayesian Ridge Regression** (60-day rolling lookback). Bayesian Ridge simultaneously prevents singular matrix errors from multicollinearity between base learner outputs and provides posterior uncertainty estimates (confidence intervals) on β₁ and β₂, which are reported in the paper to quantify how ensemble reliance shifts across regimes.
 - **Equation:** `ŷ_meta(t) = β₀(r_t) + β₁(r_t)·ŷ_LSTM + β₂(r_t)·ŷ_ANN + ε`
 
 ### Independent Rigor Baselines
@@ -71,7 +70,8 @@
 - Production-scale Kafka cluster
 - SHAP for LSTM/ANN base learners
 
-## 6. Novelty Claims (two-part, for the paper)
+## 6. Novelty Claims (three-part, for the paper)
 
 1. **First application** of the Liu et al. LSTM+ANN stacking ensemble to Indian NSE equities.
-2. **Regime-adaptive extension** of their static linear meta-model — a single-variable ablation where only the meta-model coefficients change, keeping base learners identical.
+2. **HMM-based regime-adaptive extension** of their static linear meta-model — a single-variable ablation where only the meta-model coefficients change, using HMM-detected regimes rather than a fixed volatility threshold.
+3. **Bayesian Ridge Regression meta-model** — replaces plain Ridge with a Bayesian formulation that provides posterior uncertainty estimates on ensemble weighting coefficients (β₁, β₂), enabling statistically grounded reporting on how base-learner reliance shifts across market regimes.

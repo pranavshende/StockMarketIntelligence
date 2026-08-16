@@ -25,9 +25,10 @@ v3 proposed a home-grown "regime-weighted ensemble" across four independent mode
 
 where `r_t` is the detected market regime at time t, and the coefficients are re-estimated (or selected from a small per-regime bank) whenever a drift detector flags a regime change — instead of being fixed for the whole series.
 
-This is a two-part, honestly stackable novelty claim for the paper:
-1. First application of the Liu et al. LSTM+ANN stacking architecture to Indian NSE equities (no existing paper does this, per the literature scan)
-2. A regime-adaptive extension of their meta-model's coefficients, tested against their original static version as an explicit ablation
+This is a three-part, honestly stackable novelty claim for the paper:
+1. First application of the Liu et al. LSTM+ANN stacking architecture to Indian NSE equities (no existing paper does this, per the literature scan).
+2. A regime-adaptive extension of their meta-model's coefficients (using HMM-detected regimes instead of fixed thresholds), tested against their original static version as an explicit ablation.
+3. Replacement of the plain linear/Ridge meta-model re-fit with a Bayesian Ridge Regression, providing posterior uncertainty quantification on how the ensemble weighting (β₁, β₂) shifts across market regimes.
 
 ---
 
@@ -54,11 +55,11 @@ This is a two-part, honestly stackable novelty claim for the paper:
 ### 2.2 What we add
 **A. Drift detector** — monitors rolling residual error of the meta-model's predictions using a **30-day rolling window** and a **z-score threshold of |z| > 2.0**. (Page-Hinkley test is a stretch upgrade). When error drifts beyond the threshold, it flags a regime change for that stock.
 
-**B. Regime-conditioned meta-model** — instead of one fixed (β₀, β₁, β₂), maintain either:
-- a small bank of coefficient sets, one per regime (trending / sideways / high-volatility), selected based on the current detected regime, or
-- a lightweight re-fit of the linear meta-model on a recent rolling window (e.g., the last 60 trading days) each time drift fires. **Note:** To prevent singular matrix errors due to multicollinearity between `ŷ_LSTM` and `ŷ_ANN`, use Ridge Regression ($L2$ regularization) instead of unregularized OLS for the meta-model.
+**B. HMM-based regime classifier** — instead of a simple ATR volatility tercile cut, a **Hidden Markov Model (HMM)** is fitted per stock on the returns series to identify latent market states (e.g., low-volatility trending / high-volatility trending / sideways/mean-reverting). The HMM produces a principled probabilistic state sequence with defined transition probabilities, rather than a fixed threshold. The number of hidden states is set to **3** as a starting point; this is a tunable hyperparameter to be confirmed during implementation. *HMM inputs:* daily log-returns and 20-day rolling realized volatility, per stock.
 
-Both variants keep the base learners (LSTM, ANN) untouched — **only the meta-model's combination logic is made adaptive.** This keeps the extension small, focused, and directly attributable to the one equation being modified.
+**C. Regime-conditioned meta-model** — instead of one fixed (β₀, β₁, β₂), the coefficients are re-estimated on a recent rolling window (the last 60 trading days) each time the drift detector fires. To prevent singular matrix errors due to potential multicollinearity between `ŷ_LSTM` and `ŷ_ANN`, and to produce posterior uncertainty estimates on the coefficients, **Bayesian Ridge Regression** is used instead of unregularized OLS or plain Ridge Regression. The Bayesian posterior provides explicit confidence intervals on β₁ and β₂, which strengthens the paper's statistical story (we can report how much the meta-model's reliance on LSTM vs. ANN shifts across detected regimes).
+
+All three extensions keep the base learners (LSTM, ANN) untouched — **only the meta-model's combination logic is made adaptive.** This keeps the extension small, focused, and directly attributable to the one equation being modified.
 
 ### 2.3 Why this is stronger than the v3 proposal
 - It's anchored to a **specific, citable, reproducible** published method instead of an ad hoc ensemble of four unrelated models
@@ -82,16 +83,19 @@ Both variants keep the base learners (LSTM, ANN) untouched — **only the meta-m
 - Keep existing preprocessing: cleaning, missing values, outliers.
 - **Anti-Leakage Rule (Correction to Liu et al.):** All normalization/scaling MUST be fit strictly on the training fold and applied out-of-sample to the validation/test folds. Global scaling before splitting is strictly prohibited to prevent future-data leakage.
 - **Target Variable (Correction to Liu et al.):** The primary prediction target `y` is defined as **next-day log returns** ($ln(P_t / P_{t-1})$). The dashboard will convert predicted returns back to predicted price levels for visualization. This avoids R² inflation and non-stationarity issues present in raw price predictions.
-- Add technical indicators (RSI, MACD, Bollinger Bands, rolling volatility) — used both as model features and as regime-classification signals
+- Add technical indicators (RSI, MACD, Bollinger Bands, rolling volatility) — used as model features. Note: the HMM regime classifier operates on log-returns and rolling realized volatility directly, *not* on these technical indicators, to keep the regime signal clean and separate from the prediction features.
 - Add explicit lag features as in v1, but also report at least one experiment on **returns** instead of raw price levels, to address the inflated-R² concern discussed when comparing against Liu et al.
 
 ### 3.3 Modeling layer
-- **Base learners (adopted from Liu et al., cited):** LSTM (2 layers, ~100 units, dropout) and ANN (2 hidden layers, 100 → 50 units, ReLU) — reproduce their architecture as closely as practical, adapted to per-stock NSE data
-- **Baseline meta-model (reproduced for the ablation):** their original static linear regression stacking — this is the paper's control condition
-- **Our meta-model (the contribution):** regime-conditioned coefficients as described in Section 2.2
-- **Additional baselines retained from earlier scope (for breadth, not the core claim):** Random Forest and XGBoost, evaluated independently, to keep the "more models compared" rigor fix from earlier reviewer feedback
+- **Base learners (adopted from Liu et al., cited):** LSTM (2 layers, ~100 units, dropout) and ANN (2 hidden layers, 100 → 50 units, ReLU) — reproduce their architecture as closely as practical, adapted to per-stock NSE data.
+- **Baseline meta-model (reproduced for the ablation):** their original static linear regression stacking — this is the paper's control condition.
+- **Our meta-model (the contribution):** three-stage adaptive pipeline:
+  1. **HMM Regime Classifier** — fitted per stock on (log-returns, 20-day realized volatility); produces a discrete regime label at each timestep. Number of hidden states: 3 [TODO: Verify from implementation].
+  2. **Drift Detector** — rolling z-score (30-day window, |z| > 2.0) on meta-model residuals triggers a re-fit event.
+  3. **Bayesian Ridge Regression Meta-Model** — on each drift event, re-fits the stacking equation `ŷ_meta(t) = β₀(r_t) + β₁(r_t)·ŷ_LSTM + β₂(r_t)·ŷ_ANN` on the most recent 60-day window. Bayesian Ridge provides posterior distributions over β₁ and β₂, enabling uncertainty-quantified coefficient reporting in the paper.
+- **Additional baselines retained from earlier scope (for breadth, not the core claim):** Random Forest and XGBoost, evaluated independently, to keep the "more models compared" rigor fix from earlier reviewer feedback.
 - **Validation:** walk-forward / rolling-origin CV. **Parameters:** Training window of 252 days (1 trading year), Testing window of 21 days (1 trading month), rolling step size of 21 days. The original Liu et al. single-TimeSeriesSplit approach is run once, explicitly, as a secondary comparison point.
-- **Explainability:** SHAP for the RF/XGBoost baselines (skip for LSTM/ANN — not worth the implementation cost)
+- **Explainability:** SHAP for the RF/XGBoost baselines (skip for LSTM/ANN — not worth the implementation cost).
 
 ### 3.4 Serving & dashboard layer (New Stack)
 - **Web Frontend:** React (deployed on Vercel).
@@ -208,7 +212,8 @@ Both variants keep the base learners (LSTM, ANN) untouched — **only the meta-m
 
 ## 9. Open questions before starting
 
-- Whether to reproduce Liu et al.'s exact hyperparameters (2-layer LSTM, 100 units; ANN 100→50 units) or tune them for NSE data — start with their exact settings for the reproduction, then note any necessary changes explicitly in the paper
-- Regime definition: start with volatility terciles (simplest), upgrade to a trend+volatility grid only if time allows
-- Coefficient bank vs. rolling re-fit for the adaptive meta-model — rolling re-fit is simpler to implement correctly; the coefficient bank is more interpretable for the dashboard. Prototype the rolling re-fit first
-- Confirm the resubmission deadline: if under ~4 weeks, ship the reproduced static Liu et al. baseline plus the rigor fixes now, and describe the regime-adaptive meta-model as "future work" rather than rushing it into the results section
+- Whether to reproduce Liu et al.'s exact hyperparameters (2-layer LSTM, 100 units; ANN 100→50 units) or tune them for NSE data — start with their exact settings for the reproduction, then note any necessary changes explicitly in the paper.
+- **HMM number of hidden states:** Starting value is 3 (low-vol trending / high-vol trending / sideways). The optimal number should be validated per stock using BIC/AIC [TODO: Verify from implementation].
+- **Bayesian Ridge prior strength (α, λ):** Use scikit-learn defaults initially (`alpha_1=1e-6, alpha_2=1e-6, lambda_1=1e-6, lambda_2=1e-6`). Document any tuning explicitly in the paper [TODO: Verify from implementation].
+- Coefficient bank vs. rolling re-fit for the adaptive meta-model — rolling re-fit with Bayesian Ridge is the chosen approach. A per-regime coefficient bank remains a contingency if rolling re-fit proves unstable.
+- Confirm the resubmission deadline: if under ~4 weeks, ship the reproduced static Liu et al. baseline plus the rigor fixes now, and describe the HMM + Bayesian Ridge adaptive meta-model as "future work" rather than rushing it into the results section.

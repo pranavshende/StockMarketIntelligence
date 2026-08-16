@@ -19,12 +19,12 @@
 - Add RF and XGBoost as independent, secondary baselines.
 
 ## Week 4–5: Drift Detector
-- Build the drift detector module (start with rolling z-score on meta-model residuals).
+- Build the drift detector module (rolling z-score on meta-model residuals, 30-day window, |z| > 2.0).
+- Fit the **HMM Regime Classifier** per stock on (daily log-returns, 20-day rolling realized volatility). Start with 3 hidden states; validate the optimal number using BIC/AIC per stock. *Note: the HMM input series must be computed independently from the base-learner feature set to avoid feature contamination.*
 
 ## Week 5–6: Regime-Conditioned Meta-Model (Core Novelty)
-- Build the regime classifier (e.g., volatility terciles).
-- Implement the regime-adaptive meta-model (rolling re-fit of β₀, β₁, β₂ upon drift detection using Ridge Regression).
-- *Note: Budget the most debugging time here. Prototype rolling re-fit before attempting a coefficient bank.*
+- Implement the regime-adaptive meta-model: rolling re-fit of β₀(r_t), β₁(r_t), β₂(r_t) on the most recent 60-day window each time the drift detector fires, using **Bayesian Ridge Regression** (scikit-learn `BayesianRidge`). Record the posterior mean and variance of β₁ and β₂ at each update for per-regime reporting.
+- *Note: Budget the most debugging time here. Verify that the Bayesian Ridge prior defaults produce stable fits before considering hyperparameter tuning. A per-regime coefficient bank remains a contingency if rolling re-fit proves unstable.*
 
 ## Week 6–7: The Core Ablation Experiment
 - Run the full ablation experiment: Static Meta-Model vs. Adaptive Meta-Model across all stocks.
